@@ -4,6 +4,10 @@
 
 纯浏览器侧插件：不新增 Host 服务、不写 DOM、不追加会话事件。
 
+![历史会话视图](screenshots/overview.png)
+
+<sub>「历史会话」页签 · 按分组视图：分组标题可折叠/重命名/删除，会话行显示工作区与相对时间，行尾可归类到分组</sub>
+
 ## 功能
 
 **入口**：打开任意会话，页签行最右侧的「历史会话」。
@@ -94,6 +98,7 @@ client.js           浏览器半边：注册 conversation.view 页签 + 页面�
 locale/{zh,en}.json 插件市场里的标题与描述
 icon.svg            插件图标（原创）
 test/smoke.cjs      渲染/交互冒烟测试（假 React，无需浏览器）
+screenshots/        界面截图（不随 npm 包发布）
 ```
 
 ## 测试
