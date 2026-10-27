@@ -1,0 +1,64 @@
+{
+  "name": "dsh-session-history",
+  "version": "1.0.0",
+  "private": true,
+  "description": "在会话头部的页签行新增「历史会话」视图：按工作区、时间或分组浏览全部历史会话，点击任意一条即可进入。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/smoke.cjs ./client.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chaosxu1/dshChatHisGroup.git"
+  },
+  "homepage": "https://github.com/chaosxu1/dshChatHisGroup#readme",
+  "bugs": {
+    "url": "https://github.com/chaosxu1/dshChatHisGroup/issues"
+  },
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ]
+    },
+    "engines": {
+      "dsh": ">=0.2.1-rc.3"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "session",
+    "history",
+    "session-history",
+    "group"
+  ],
+  "license": "MIT"
+}

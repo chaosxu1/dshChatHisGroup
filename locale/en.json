@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session History View",
+    "description": "Adds a History view tab beside the conversation tabs: browse every past session grouped by workspace, time, or your own named groups, and open one with a click."
+  }
+}

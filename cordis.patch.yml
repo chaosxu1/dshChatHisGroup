@@ -1,0 +1,13 @@
+# dsh-session-history 的 bundle patch 层。
+#
+# 这一行加载本包的 Host 半边（一个空的 Cordis 插件：所有工作都在浏览器半边）。
+# package.json 里的 `dsh.client` 声明会让 Web 应用把 ./client.js 作为浏览器半边加载，
+# 它向 `conversation.view` 注册「历史会话」页签。
+#
+# 停用：在 profile 的 cordis.patch.yml（最后一个 patch 层）里按 id 关闭，然后重启 dsh：
+#
+#   - id: session-history
+#     disabled: true
+- insert:
+    - id: session-history
+      name: dsh-session-history

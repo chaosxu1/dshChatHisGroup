@@ -1,0 +1,11 @@
+# 打包产物（npm pack 生成）
+*.tgz
+
+# 依赖与编辑器
+node_modules/
+.idea/
+.vscode/
+
+# 系统
+.DS_Store
+Thumbs.db
