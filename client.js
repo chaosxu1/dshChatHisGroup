@@ -195,7 +195,18 @@ window.__ModuleLoader__.load({
 		 * 浏览器本地视图偏好
 		 * ------------------------------------------------------------------ */
 
-		const DEFAULT_VIEW = { mode: 'workspace', collapsed: {}, groups: [], assignments: {} }
+		/**
+		 * 视图偏好。除分组定义外，这里也放「当前分组筛选」和「显示已归档」：
+		 * 它们是全局设置，不随会话切换重置（每个会话的历史会话页读同一份）。
+		 */
+		const DEFAULT_VIEW = {
+			mode: 'workspace',
+			collapsed: {},
+			groups: [],
+			assignments: {},
+			filter: '',
+			showArchived: false
+		}
 
 		/** 槽位没有提供标准 hooks 时的空会话目录，保证页面仍能渲染空状态。 */
 		const EMPTY_LIST = { ids: [], byId: {} }
@@ -204,7 +215,7 @@ window.__ModuleLoader__.load({
 
 		/**
 		 * 读取并清洗本地视图偏好；任何异常都退回默认值，绝不让面板因此白屏。
-		 * @returns {{mode: string, collapsed: object, groups: Array, assignments: object}} 视图偏好
+		 * @returns {{mode: string, collapsed: object, groups: Array, assignments: object, filter: string, showArchived: boolean}} 视图偏好
 		 */
 		function readView() {
 			const fallback = { ...DEFAULT_VIEW }
@@ -232,7 +243,9 @@ window.__ModuleLoader__.load({
 					parsed.assignments !== null && typeof parsed.assignments === 'object'
 						? parsed.assignments
 						: {}
-				return { mode, collapsed, groups, assignments }
+				const filter = typeof parsed.filter === 'string' ? parsed.filter : ''
+				const showArchived = parsed.showArchived === true
+				return { mode, collapsed, groups, assignments, filter, showArchived }
 			} catch {
 				return fallback
 			}
@@ -605,7 +618,6 @@ window.__ModuleLoader__.load({
 
 			const [view, setView] = React.useState(readView)
 			const [query, setQuery] = React.useState('')
-			const [showArchived, setShowArchived] = React.useState(false)
 			const [drafting, setDrafting] = React.useState(false)
 			const [draftName, setDraftName] = React.useState('')
 			const [renaming, setRenaming] = React.useState(null)
@@ -614,7 +626,6 @@ window.__ModuleLoader__.load({
 			const [menuCreating, setMenuCreating] = React.useState(false)
 			const [menuName, setMenuName] = React.useState('')
 			const [notice, setNotice] = React.useState(null)
-			const [groupFilter, setGroupFilter] = React.useState('')
 
 			// 两份快照都由框架投影好并复用引用：这里只取用，不自己折叠会话事件。
 			// （hooks 的调用与否只取决于槽位是否给了标准 props，跨渲染保持一致。）
@@ -656,13 +667,14 @@ window.__ModuleLoader__.load({
 
 			const needle = query.trim().toLowerCase()
 			// 分组筛选只在「按分组」页生效；分组被删掉时自动失效，避免空列表锁死。
+			// 筛选项存在视图偏好里，所以切换会话后仍是同一组（全局设置）。
 			const activeFilter =
-				view.mode === 'custom' && view.groups.some((group) => group.id === groupFilter)
-					? groupFilter
+				view.mode === 'custom' && view.groups.some((group) => group.id === view.filter)
+					? view.filter
 					: ''
 
 			const visible = rows.filter((row) => {
-				if (!showArchived && row.archived) return false
+				if (view.showArchived !== true && row.archived) return false
 				if (activeFilter !== '' && view.assignments[row.id] !== activeFilter) return false
 				if (needle === '') return true
 				const title = row.title === '' ? t('untitled') : row.title
@@ -699,8 +711,8 @@ window.__ModuleLoader__.load({
 			}
 
 			const setMode = (mode) => {
-				// 手动换分组方式时清掉筛选：否则切回来会莫名其妙只剩一组。
-				setGroupFilter('')
+				// 换分组方式不清空已选分组：筛选只在「按分组」页生效，
+				// 切回来还是同一组（它是全局设置，不是临时状态）。
 				setView((current) => ({ ...current, mode }))
 			}
 
@@ -709,11 +721,13 @@ window.__ModuleLoader__.load({
 			 * @param {string} groupId 分组 id，空串表示「全部分组」
 			 */
 			const selectGroup = (groupId) => {
-				setGroupFilter(groupId)
-				if (groupId === '') return
 				setView((current) => ({
 					...current,
-					collapsed: { ...current.collapsed, ['c:' + groupId]: false }
+					filter: groupId,
+					collapsed:
+						groupId === ''
+							? current.collapsed
+							: { ...current.collapsed, ['c:' + groupId]: false }
 				}))
 			}
 
@@ -946,9 +960,13 @@ window.__ModuleLoader__.load({
 									title: t('action.filterByGroup'),
 									'aria-label': tag.name + ' · ' + t('action.filterByGroup'),
 									onClick: () => {
-										// 跳到「按分组」并只留这一组，同时把它展开。
-										setView((current) => ({ ...current, mode: 'custom' }))
-										selectGroup(tag.id)
+										// 跳到「按分组」、只留这一组并展开它：一次更新写完，避免中间态闪烁。
+										setView((current) => ({
+											...current,
+											mode: 'custom',
+											filter: tag.id,
+											collapsed: { ...current.collapsed, ['c:' + tag.id]: false }
+										}))
 									}
 								},
 								tag.name
@@ -1037,8 +1055,8 @@ window.__ModuleLoader__.load({
 						{ className: 'dsh-sh-check' },
 						h('input', {
 							type: 'checkbox',
-							checked: showArchived,
-							onChange: (event) => setShowArchived(event.target.checked)
+							checked: view.showArchived === true,
+							onChange: (event) => setView((current) => ({ ...current, showArchived: event.target.checked }))
 						}),
 						h('span', null, t('action.showArchived'))
 					),

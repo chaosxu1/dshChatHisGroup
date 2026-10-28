@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-history",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "在会话头部的页签行新增「历史会话」视图：按工作区、时间或分组浏览全部历史会话，点击任意一条即可进入。",
   "type": "module",

@@ -2,13 +2,13 @@
  * dsh-session-history 冒烟测试（不启动浏览器）。
  *
  * 用极简 React 假实现 + 可记录的 setState，既验证渲染结果，也能直接调用
- * 控件的 onChange / onClick 来断言交互逻辑（例如"选分组后自动展开"）。
+ * 控件的 onChange / onClick 来断言交互逻辑（选组自动展开、全局筛选持久化等）。
  */
 const fs = require('fs')
 const vm = require('vm')
 
 const CLIENT = process.argv[2]
-if (!CLIENT) throw new Error('usage: node test.cjs <client.js>')
+if (!CLIENT) throw new Error('usage: node test/smoke.cjs <client.js>')
 const source = fs.readFileSync(CLIENT, 'utf8')
 
 /* ---------------- 极简 React ---------------- */
@@ -96,13 +96,12 @@ const ctx = {
 			return () => {}
 		},
 		bind(ns) {
-			const lookup = (key, params) => {
+			return (key, params) => {
 				const template = dictionaries[ns].zh[key]
 				if (template === undefined) throw new Error('missing locale key: ' + key)
 				if (params === undefined) return template
 				return template.replace(/\{(\w+)\}/g, (_, name) => String(params[name]))
 			}
-			return lookup
 		}
 	},
 	slots: {
@@ -152,7 +151,12 @@ const workspaces = {
 	pinnedSessionIds: ['s1']
 }
 
-/* ---------------- 渲染与遍历 ---------------- */
+/* ---------------- 渲染与遍历 ----------------
+ * 状态顺序：0 view / 1 query / 2 drafting / 3 draftName / 4 renaming /
+ *           5 renameValue / 6 menu / 7 menuCreating / 8 menuName / 9 notice
+ * 视图偏好（mode / filter / showArchived / ...）走 localStorage 里的 view，
+ * 测试通过 viewJson 参数注入，更接近"全局设置"的真实来源。
+ */
 function render(stateInit, viewJson) {
 	stored = viewJson === undefined ? null : JSON.stringify(viewJson)
 	stateValues = stateInit || []
@@ -210,6 +214,12 @@ function replay(initial) {
 	return state
 }
 
+const baseView = (patch) =>
+	Object.assign(
+		{ mode: 'workspace', collapsed: {}, groups: [], assignments: {}, filter: '', showArchived: false },
+		patch || {}
+	)
+
 /* ---------------- 用例 1：默认按工作区 ---------------- */
 let tree = render()
 let text = textOf(tree)
@@ -225,14 +235,14 @@ if (!text.includes('3 个会话 · 2 个工作区')) throw new Error('case1: wro
 let modes = pressedModes(tree)
 if (modes.length !== 1 || modes[0] !== '按工作区') throw new Error('case1: wrong default mode ' + modes.join(','))
 
-/* ---------------- 用例 2：显示已归档 ---------------- */
-tree = render([undefined, '', true])
+/* ---------------- 用例 2：显示已归档（来自持久化视图偏好） ---------------- */
+tree = render([], baseView({ showArchived: true }))
 text = textOf(tree)
 if (!text.includes('已归档的会话')) throw new Error('case2: archived row missing')
 if (!text.includes('已归档')) throw new Error('case2: archived badge missing')
 
 /* ---------------- 用例 3：按时间 ---------------- */
-tree = render([undefined, '', true], { mode: 'time', collapsed: {}, groups: [], assignments: {} })
+tree = render([], baseView({ mode: 'time', showArchived: true }))
 text = textOf(tree)
 for (const bucket of ['今天', '近 7 天', '更早']) {
 	if (!text.includes(bucket)) throw new Error('case3: missing bucket ' + bucket)
@@ -240,16 +250,15 @@ for (const bucket of ['今天', '近 7 天', '更早']) {
 if (!pressedModes(tree).includes('按时间')) throw new Error('case3: mode not reflected')
 
 /* ---------------- 用例 4：按分组 ---------------- */
-const customView = {
+const customView = baseView({
 	mode: 'custom',
-	collapsed: {},
 	groups: [
 		{ id: 'g1', name: '笔记工程' },
 		{ id: 'g2', name: '空分组' }
 	],
 	assignments: { s1: 'g1', s6: 'g1' }
-}
-tree = render([undefined, '', false], customView)
+})
+tree = render([], customView)
 text = textOf(tree)
 if (!text.includes('笔记工程')) throw new Error('case4: custom group missing')
 const emptyMentions = text.split('空分组').length - 1
@@ -258,32 +267,29 @@ if (!text.includes('note-tools')) throw new Error('case4: unassigned session mus
 if (!text.includes('移动到分组')) throw new Error('case4: move action missing')
 
 /* ---------------- 用例 5：搜索 ---------------- */
-tree = render([undefined, 'alpha', false], { mode: 'workspace', collapsed: {}, groups: [], assignments: {} })
+tree = render([undefined, 'alpha'])
 text = textOf(tree)
 if (!text.includes('note-tools')) throw new Error('case5: workspace match must survive')
 if (text.includes('验证 web_fetch 可用性')) throw new Error('case5: non-matching row must be filtered')
 
-tree = render([undefined, 'zzz', false])
+tree = render([undefined, 'zzz'])
 if (!textOf(tree).includes('没有匹配的会话')) throw new Error('case5: empty search state missing')
 
 /* ---------------- 用例 6：折叠 ---------------- */
-tree = render([undefined, '', false], { mode: 'workspace', collapsed: { 'w:w1': true }, groups: [], assignments: {} })
+tree = render([], baseView({ collapsed: { 'w:w1': true } }))
 text = textOf(tree)
 if (text.includes('验证 web_fetch 可用性')) throw new Error('case6: collapsed group must hide rows')
 if (!text.includes('WorkAuto')) throw new Error('case6: collapsed header must stay')
 
 /* ---------------- 用例 7：按时间页的行内分组标签 ---------------- */
-const timeView = { mode: 'time', collapsed: {}, groups: [{ id: 'g1', name: '笔记工程' }], assignments: { s1: 'g1' } }
-tree = render([undefined, '', false], timeView)
+const timeView = baseView({ mode: 'time', groups: [{ id: 'g1', name: '笔记工程' }], assignments: { s1: 'g1' } })
+tree = render([], timeView)
 text = textOf(tree)
 if (!text.includes('dsh-sh-chip')) throw new Error('case7: chip missing in time mode')
 if (!text.includes('只看这个分组')) throw new Error('case7: chip action label missing')
 
 /* ---------------- 用例 8：移动菜单 ---------------- */
-tree = render(
-	[undefined, '', false, undefined, undefined, undefined, undefined, { id: 's1', group: '', left: 20, top: 20 }],
-	timeView
-)
+tree = render([undefined, '', false, '', null, '', { id: 's1', group: '', left: 20, top: 20 }], timeView)
 text = textOf(tree)
 if (!text.includes('笔记工程')) throw new Error('case8: group missing from menu')
 if (!text.includes('未分组')) throw new Error('case8: ungrouped choice missing')
@@ -291,7 +297,7 @@ if (!text.includes('新建分组并移入')) throw new Error('case8: create entr
 
 /* ---------------- 用例 9：菜单里的新建输入 ---------------- */
 tree = render(
-	[undefined, '', false, undefined, undefined, undefined, undefined, { id: 's1', group: '', left: 20, top: 20 }, true, ''],
+	[undefined, '', false, '', null, '', { id: 's1', group: '', left: 20, top: 20 }, true, ''],
 	timeView
 )
 text = textOf(tree)
@@ -300,83 +306,92 @@ if (text.includes('新建分组并移入')) throw new Error('case9: entry list s
 
 /* ---------------- 用例 10：无分组时不显示无意义的"未分组" ---------------- */
 tree = render(
-	[undefined, '', false, undefined, undefined, undefined, undefined, { id: 's1', group: '', left: 20, top: 20 }],
-	{ mode: 'time', collapsed: {}, groups: [], assignments: {} }
+	[undefined, '', false, '', null, '', { id: 's1', group: '', left: 20, top: 20 }],
+	baseView({ mode: 'time' })
 )
 text = textOf(tree)
 if (!text.includes('新建分组并移入')) throw new Error('case10: create entry missing')
 if (text.includes('dsh-sh-menu-item is-active')) throw new Error('case10: ungrouped item should be omitted')
 
-/* ---------------- 用例 11：按组筛选 ---------------- */
-tree = render(
-	[undefined, '', false, undefined, undefined, undefined, undefined, undefined, false, '', undefined, 'g1'],
-	customView
-)
+/* ---------------- 用例 11：按组筛选（来自持久化偏好） ---------------- */
+tree = render([], baseView(Object.assign({}, customView, { filter: 'g1' })))
 text = textOf(tree)
 if (!text.includes('全部分组')) throw new Error('case11: filter select missing')
 if (text.includes('note-tools')) throw new Error('case11: other sessions must be filtered out')
 if (text.includes('dsh-sh-chip')) throw new Error('case11: chip must not render in custom mode')
 
 /* ---------------- 用例 12：筛选无结果的空状态 ---------------- */
-tree = render(
-	[undefined, '', false, undefined, undefined, undefined, undefined, undefined, false, '', undefined, 'g2'],
-	{ mode: 'custom', collapsed: {}, groups: [{ id: 'g2', name: '空分组' }], assignments: {} }
-)
+tree = render([], baseView({ mode: 'custom', groups: [{ id: 'g2', name: '空分组' }], filter: 'g2' }))
 if (!textOf(tree).includes('这个分组下没有可见会话')) throw new Error('case12: group empty state missing')
 
 /* ---------------- 用例 13：选择分组后自动展开 ---------------- */
-const collapsedView = {
+const collapsedView = baseView({
 	mode: 'custom',
 	collapsed: { 'c:g1': true },
 	groups: [{ id: 'g1', name: '笔记工程' }],
 	assignments: { s1: 'g1' }
-}
-tree = render(
-	[undefined, '', false, undefined, undefined, undefined, undefined, undefined, false, '', undefined, ''],
-	collapsedView
-)
+})
+tree = render([], collapsedView)
 if (textOf(tree).includes('验证 web_fetch 可用性')) throw new Error('case13: precondition failed')
 const select = collect(tree).find((node) => node.type === 'select')
 if (select === undefined) throw new Error('case13: select missing')
 select.props.onChange({ target: { value: 'g1' } })
 let simulated = replay(collapsedView)
 if (simulated.collapsed['c:g1'] !== false) throw new Error('case13: selecting a group must expand it')
-if (!setterCalls.some((call) => call.index === 11 && call.arg === 'g1')) throw new Error('case13: filter not set')
+if (simulated.filter !== 'g1') throw new Error('case13: filter not stored in view')
 
 /* ---------------- 用例 14：点分组标签切页并展开 ---------------- */
-const chipView = {
+const chipView = baseView({
 	mode: 'time',
 	collapsed: { 'c:g1': true },
 	groups: [{ id: 'g1', name: '笔记工程' }],
 	assignments: { s1: 'g1' }
-}
-tree = render([undefined, '', false], chipView)
+})
+tree = render([], chipView)
 const chip = collect(tree).find((node) => node.props !== undefined && node.props.className === 'dsh-sh-chip')
 if (chip === undefined) throw new Error('case14: chip missing')
 chip.props.onClick()
 simulated = replay(chipView)
 if (simulated.mode !== 'custom') throw new Error('case14: chip must switch view')
+if (simulated.filter !== 'g1') throw new Error('case14: chip must store the filter')
 if (simulated.collapsed['c:g1'] !== false) throw new Error('case14: chip must expand target group')
 
-/* ---------------- 用例 15：分组方式用下划线而非方框 ---------------- */
-if (!source.includes('aria-pressed="true"]::after')) throw new Error('case15: underline indicator missing')
+/* ---------------- 用例 15：切到另一个会话后，筛选仍是同一组 ----------------
+ * 模拟：会话 A 选了分组 g1 → 视图偏好被持久化 → 会话 B 挂载时读到同一份偏好。
+ */
+const aTree = render([], customView)
+const aSelect = collect(aTree).find((node) => node.type === 'select')
+aSelect.props.onChange({ target: { value: 'g1' } })
+const persisted = replay(customView)
+if (persisted.filter !== 'g1') throw new Error('case15: filter not persisted from session A')
+
+const bTree = render([], persisted)
+const bText = textOf(bTree)
+if (!bText.includes('笔记工程')) throw new Error('case15: session B lost the selected group')
+if (bText.includes('note-tools')) throw new Error('case15: session B must stay filtered')
+const bSelect = collect(bTree).find((node) => node.type === 'select')
+if (bSelect.props.value !== 'g1') {
+	throw new Error('case15: select must show the restored group, got ' + bSelect.props.value)
+}
+
+/* ---------------- 用例 16：分组方式用下划线而非方框 ---------------- */
+if (!source.includes('aria-pressed="true"]::after')) throw new Error('case16: underline indicator missing')
 if (source.includes('box-shadow:0 0 0 1px var(--dsw-alias-border-l1)')) {
-	throw new Error('case15: old boxed segment style still present')
+	throw new Error('case16: old boxed segment style still present')
 }
 const underlineAt = source.indexOf('aria-pressed="true"]::after')
 const underlineRule = source.slice(underlineAt, underlineAt + 300)
 if (!underlineRule.includes('--dsw-alias-state-business-primary')) {
-	throw new Error('case15: underline must use the host tab accent token (state-business-primary), got: ' + underlineRule)
+	throw new Error('case16: underline must use the host tab accent token, got: ' + underlineRule)
 }
-if (underlineRule.includes('brand-primary')) throw new Error('case15: brand-primary is near-black in this theme; must not be used')
+if (underlineRule.includes('brand-primary')) throw new Error('case16: brand-primary is near-black in this theme')
 
-// 选中项的文字颜色也要跟宿主页签一致（蓝色，而不是主文字色）。
 const activeAt = source.indexOf('button[aria-pressed="true"]{color:')
-if (activeAt < 0) throw new Error('case15: active mode text-color rule missing')
+if (activeAt < 0) throw new Error('case16: active mode text-color rule missing')
 const activeRule = source.slice(activeAt, activeAt + 160)
 if (!activeRule.includes('--dsw-alias-state-business-primary')) {
-	throw new Error('case15: active mode text must be the tab blue, got: ' + activeRule)
+	throw new Error('case16: active mode text must be the tab blue, got: ' + activeRule)
 }
-if (activeRule.includes('label-primary)')) throw new Error('case15: active text must not fall back to primary label')
+if (activeRule.includes('label-primary)')) throw new Error('case16: active text must not fall back to primary label')
 
-console.log('ALL RENDER CASES PASSED (15)')
+console.log('ALL RENDER CASES PASSED (16)')
