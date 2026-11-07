@@ -47,6 +47,9 @@ window.__ModuleLoader__.load({
 		const zh = {
 			'view.label': '历史会话',
 			'search.placeholder': '搜索标题、工作区或内容',
+			'search.state.searching': '搜索内容中…',
+			'search.state.hits': '内容命中 {n} 条',
+			'search.state.error': '内容搜索不可用（{code}）',
 			'mode.workspace': '按工作区',
 			'mode.time': '按时间',
 			'mode.custom': '按分组',
@@ -89,6 +92,9 @@ window.__ModuleLoader__.load({
 		const en = {
 			'view.label': 'History',
 			'search.placeholder': 'Search title, workspace, or content',
+			'search.state.searching': 'Searching content…',
+			'search.state.hits': '{n} content hits',
+			'search.state.error': 'Content search unavailable ({code})',
 			'mode.workspace': 'By workspace',
 			'mode.time': 'By time',
 			'mode.custom': 'By group',
@@ -549,6 +555,8 @@ window.__ModuleLoader__.load({
 			'.dsh-sh-btn:hover{border-color:var(--dsw-alias-border-l2)}',
 			'.dsh-sh-count{margin-left:auto;font-size:12px;color:var(--dsw-alias-label-secondary);white-space:nowrap;flex:none;font-variant-numeric:tabular-nums}',
 			'.dsh-sh-notice{font-size:12px;color:var(--dsw-alias-link,inherit);white-space:nowrap;flex:none;overflow:hidden;text-overflow:ellipsis;max-width:240px}',
+			'.dsh-sh-search-state{font-size:11px;color:var(--dsw-alias-label-secondary);white-space:nowrap;flex:none;overflow:hidden;text-overflow:ellipsis;max-width:220px}',
+			'.dsh-sh-search-state.is-error{color:var(--dsw-alias-state-warn-primary)}',
 			'.dsh-sh-select{height:26px;max-width:180px;padding:0 6px;border-radius:7px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:inherit;font:inherit;font-size:12px;flex:none;cursor:pointer}',
 			'.dsh-sh-select:focus{outline:none;border-color:var(--dsw-alias-border-l2)}',
 			'.dsh-sh-chip{flex:none;max-width:140px;height:20px;padding:0 8px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font:inherit;font-size:11px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}',
@@ -631,7 +639,7 @@ window.__ModuleLoader__.load({
 			const [menuName, setMenuName] = React.useState('')
 			const [notice, setNotice] = React.useState(null)
 			// 内容搜索结果：`query` 记录结果对应的查询词，避免旧请求的结果串到新词上。
-			const [hits, setHits] = React.useState({ query: '', snippets: {} })
+			const [hits, setHits] = React.useState({ query: '', snippets: {}, state: 'idle', code: '' })
 
 			// 两份快照都由框架投影好并复用引用：这里只取用，不自己折叠会话事件。
 			// （hooks 的调用与否只取决于槽位是否给了标准 props，跨渲染保持一致。）
@@ -651,13 +659,14 @@ window.__ModuleLoader__.load({
 			}, [notice])
 
 			// 内容搜索：停顿 250ms 后问 Host 的消息索引（只搜标题不够用），
-			// 新查询会 abort 上一次请求，失败就当没有内容命中，不影响标题匹配。
+			// 新查询会 abort 上一次请求。失败会显示具体原因，而不是静默当成"没有命中"。
 			React.useEffect(() => {
 				const text = query.trim()
 				if (text === '' || typeof props.searchSessions !== 'function') {
-					setHits({ query: '', snippets: {} })
+					setHits({ query: '', snippets: {}, state: 'idle', code: '' })
 					return
 				}
+				setHits({ query: text, snippets: {}, state: 'searching', code: '' })
 				const controller = new AbortController()
 				const timer = setTimeout(async () => {
 					try {
@@ -677,9 +686,24 @@ window.__ModuleLoader__.load({
 								}
 							}
 						}
-						setHits({ query: text, snippets })
-					} catch {
-						if (!controller.signal.aborted) setHits({ query: text, snippets: {} })
+						const failed = result !== null && result !== undefined && result.ok === false
+						const code =
+							failed && result.error !== null && result.error !== undefined && typeof result.error.code === 'string'
+								? result.error.code
+								: ''
+						setHits({
+							query: text,
+							snippets,
+							state: failed ? 'error' : 'ready',
+							code: code
+						})
+					} catch (error) {
+						if (controller.signal.aborted) return
+						const code =
+							error !== null && error !== undefined && typeof error.message === 'string'
+								? error.message.slice(0, 40)
+								: 'unknown'
+						setHits({ query: text, snippets: {}, state: 'error', code })
 					}
 				}, 250)
 				return () => {
@@ -713,6 +737,16 @@ window.__ModuleLoader__.load({
 			const needle = searched.toLowerCase()
 			// 只有当前查询词的内容结果才算数，避免上一词的命中残留。
 			const snippets = hits.query === searched ? hits.snippets : EMPTY_SNIPPETS
+			// 搜索状态：没输入时为空；结果对不上当前词时视为"仍在搜索"。
+			const searchState = searched === '' ? '' : hits.query === searched ? hits.state || 'ready' : 'searching'
+			const searchLabel =
+				searchState === ''
+					? ''
+					: searchState === 'error'
+						? t('search.state.error', { code: hits.code || 'error' })
+						: searchState === 'ready'
+							? t('search.state.hits', { n: String(Object.keys(snippets).length) })
+							: t('search.state.searching')
 			// 分组筛选只在「按分组」页生效；分组被删掉时自动失效，避免空列表锁死。
 			// 筛选项存在视图偏好里，所以切换会话后仍是同一组（全局设置）。
 			const activeFilter =
@@ -1136,6 +1170,17 @@ window.__ModuleLoader__.load({
 								'button',
 								{ type: 'button', className: 'dsh-sh-btn', onClick: () => setDrafting(true) },
 								t('action.newGroup')
+							)
+						: null,
+					searchLabel !== ''
+						? h(
+								'span',
+								{
+									className: 'dsh-sh-search-state' + (searchState === 'error' ? ' is-error' : ''),
+									role: 'status',
+									title: searchLabel
+								},
+								searchLabel
 							)
 						: null,
 					notice !== null ? h('span', { className: 'dsh-sh-notice', role: 'status' }, notice.text) : null,

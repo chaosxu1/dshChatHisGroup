@@ -424,4 +424,27 @@ text = textOf(tree)
 if (text.includes('note-tools')) throw new Error('case18: stale hits must be ignored')
 if (!text.includes('没有匹配的会话')) throw new Error('case18: empty state expected for the new query')
 
-console.log('ALL RENDER CASES PASSED (18)')
+/* ---------------- 用例 19：搜索状态可见（命中条数 / 不可用原因） ---------------- */
+tree = render(
+	(() => {
+		const state = stateWithHits('缓存', { s4: '片段' })
+		state[10] = { query: '缓存', snippets: { s4: '片段' }, state: 'ready', code: '' }
+		return state
+	})()
+)
+text = textOf(tree)
+if (!text.includes('内容命中 1 条')) throw new Error('case19: hit-count status missing')
+
+tree = render(
+	(() => {
+		const state = stateWithHits('缓存', {})
+		state[10] = { query: '缓存', snippets: {}, state: 'error', code: 'session/search-unavailable' }
+		return state
+	})()
+)
+text = textOf(tree)
+if (!text.includes('内容搜索不可用（session/search-unavailable）')) {
+	throw new Error('case19: error status must show the failure code')
+}
+
+console.log('ALL RENDER CASES PASSED (19)')
