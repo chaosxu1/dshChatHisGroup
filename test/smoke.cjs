@@ -153,7 +153,8 @@ const workspaces = {
 
 /* ---------------- 渲染与遍历 ----------------
  * 状态顺序：0 view / 1 query / 2 drafting / 3 draftName / 4 renaming /
- *           5 renameValue / 6 menu / 7 menuCreating / 8 menuName / 9 notice
+ *           5 renameValue / 6 menu / 7 menuCreating / 8 menuName / 9 notice /
+ *           10 hits（内容搜索结果 {query, snippets}）
  * 视图偏好（mode / filter / showArchived / ...）走 localStorage 里的 view，
  * 测试通过 viewJson 参数注入，更接近"全局设置"的真实来源。
  */
@@ -166,11 +167,20 @@ function render(stateInit, viewJson) {
 		translate: ctx.locale.bind('dsh.session-history'),
 		useSessions: (selector) => selector(list),
 		useWorkspaces: (selector) => selector(workspaces),
+		searchSessions: async () => ({ ok: true, value: { items: [], hasMore: false } }),
 		sessionId: 's1',
 		openView: () => {},
 		openSession: () => {}
 	}
 	return registration.component(props)
+}
+
+/** 构造"搜索词 + 内容命中"这一对状态。 */
+function stateWithHits(query, snippets) {
+	const state = []
+	state[1] = query
+	state[10] = { query, snippets }
+	return state
 }
 
 function textOf(node) {
@@ -394,4 +404,24 @@ if (!activeRule.includes('--dsw-alias-state-business-primary')) {
 }
 if (activeRule.includes('label-primary)')) throw new Error('case16: active text must not fall back to primary label')
 
-console.log('ALL RENDER CASES PASSED (16)')
+/* ---------------- 用例 17：内容命中（标题不匹配也能搜到，并显示片段） ---------------- */
+tree = render(stateWithHits('缓存', { s4: '这里提到了缓存策略与过期时间' }), baseView())
+text = textOf(tree)
+if (!text.includes('note-tools')) throw new Error('case17: content-only hit must appear')
+if (!text.includes('这里提到了缓存策略与过期时间')) throw new Error('case17: snippet text missing')
+if (!text.includes('dsh-sh-row-snippet')) throw new Error('case17: snippet style missing')
+if (text.includes('验证 web_fetch 可用性')) throw new Error('case17: unrelated rows must be filtered out')
+
+/* ---------------- 用例 18：过期的内容结果不能串到新查询上 ---------------- */
+tree = render(
+	(() => {
+		const state = stateWithHits('完全不同的词', { s4: '旧查询的片段' })
+		state[1] = '缓存'
+		return state
+	})()
+)
+text = textOf(tree)
+if (text.includes('note-tools')) throw new Error('case18: stale hits must be ignored')
+if (!text.includes('没有匹配的会话')) throw new Error('case18: empty state expected for the new query')
+
+console.log('ALL RENDER CASES PASSED (18)')

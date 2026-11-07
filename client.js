@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
 
 		const zh = {
 			'view.label': '历史会话',
-			'search.placeholder': '搜索标题或工作区',
+			'search.placeholder': '搜索标题、工作区或内容',
 			'mode.workspace': '按工作区',
 			'mode.time': '按时间',
 			'mode.custom': '按分组',
@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
 
 		const en = {
 			'view.label': 'History',
-			'search.placeholder': 'Search title or workspace',
+			'search.placeholder': 'Search title, workspace, or content',
 			'mode.workspace': 'By workspace',
 			'mode.time': 'By time',
 			'mode.custom': 'By group',
@@ -212,6 +212,8 @@ window.__ModuleLoader__.load({
 		const EMPTY_LIST = { ids: [], byId: {} }
 		/** 同上：空工作区快照。 */
 		const EMPTY_WORKSPACES = { items: [], archivedSessionIds: [], pinnedSessionIds: [] }
+		/** 没有内容命中时复用的空映射。 */
+		const EMPTY_SNIPPETS = {}
 
 		/**
 		 * 读取并清洗本地视图偏好；任何异常都退回默认值，绝不让面板因此白屏。
@@ -565,11 +567,13 @@ window.__ModuleLoader__.load({
 			'.dsh-sh-link.is-danger:hover{color:var(--dsw-alias-state-error-primary)}',
 			'.dsh-sh-rows{display:flex;flex-direction:column}',
 			'.dsh-sh-row{display:flex;align-items:center;gap:4px;position:relative}',
-			'.dsh-sh-row-main{flex:1;min-width:0;display:flex;align-items:center;gap:9px;height:32px;padding:0 8px;border:none;border-radius:7px;background:transparent;color:inherit;font:inherit;font-size:13px;text-align:left;cursor:pointer}',
+			'.dsh-sh-row-main{flex:1;min-width:0;display:flex;align-items:center;gap:9px;min-height:32px;padding:4px 8px;border:none;border-radius:7px;background:transparent;color:inherit;font:inherit;font-size:13px;text-align:left;cursor:pointer}',
 			'.dsh-sh-row-main:hover{background:var(--dsw-alias-bg-layer-2)}',
 			'.dsh-sh-row-main:disabled{cursor:default;color:var(--dsw-alias-label-secondary)}',
 			'.dsh-sh-row-main:disabled:hover{background:transparent}',
-			'.dsh-sh-row-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+			'.dsh-sh-row-col{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:1px}',
+			'.dsh-sh-row-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+			'.dsh-sh-row-snippet{min-width:0;font-size:11px;line-height:15px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 			'.dsh-sh-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--dsw-alias-state-idle-primary)}',
 			'.dsh-sh-dot.is-running{background:var(--dsw-alias-state-success-primary)}',
 			'.dsh-sh-dot.is-archived{background:var(--dsw-alias-border-l2)}',
@@ -626,6 +630,8 @@ window.__ModuleLoader__.load({
 			const [menuCreating, setMenuCreating] = React.useState(false)
 			const [menuName, setMenuName] = React.useState('')
 			const [notice, setNotice] = React.useState(null)
+			// 内容搜索结果：`query` 记录结果对应的查询词，避免旧请求的结果串到新词上。
+			const [hits, setHits] = React.useState({ query: '', snippets: {} })
 
 			// 两份快照都由框架投影好并复用引用：这里只取用，不自己折叠会话事件。
 			// （hooks 的调用与否只取决于槽位是否给了标准 props，跨渲染保持一致。）
@@ -643,6 +649,44 @@ window.__ModuleLoader__.load({
 				const timer = setTimeout(() => setNotice(null), 2600)
 				return () => clearTimeout(timer)
 			}, [notice])
+
+			// 内容搜索：停顿 250ms 后问 Host 的消息索引（只搜标题不够用），
+			// 新查询会 abort 上一次请求，失败就当没有内容命中，不影响标题匹配。
+			React.useEffect(() => {
+				const text = query.trim()
+				if (text === '' || typeof props.searchSessions !== 'function') {
+					setHits({ query: '', snippets: {} })
+					return
+				}
+				const controller = new AbortController()
+				const timer = setTimeout(async () => {
+					try {
+						const result = await props.searchSessions(text, controller.signal)
+						if (controller.signal.aborted) return
+						const snippets = {}
+						const value = result !== null && result !== undefined && result.ok === true ? result.value : null
+						if (value !== null && value !== undefined && Array.isArray(value.items)) {
+							for (const item of value.items) {
+								if (
+									item !== null &&
+									item !== undefined &&
+									typeof item.sessionId === 'string' &&
+									typeof item.snippet === 'string'
+								) {
+									snippets[item.sessionId] = item.snippet
+								}
+							}
+						}
+						setHits({ query: text, snippets })
+					} catch {
+						if (!controller.signal.aborted) setHits({ query: text, snippets: {} })
+					}
+				}, 250)
+				return () => {
+					clearTimeout(timer)
+					controller.abort()
+				}
+			}, [query])
 
 			// 目标会话挂载本视图时切回「对话」，避免"点了却是同一张列表"。
 			React.useEffect(() => {
@@ -665,7 +709,10 @@ window.__ModuleLoader__.load({
 
 			const rows = React.useMemo(() => buildRows(list, workspaces), [list, workspaces])
 
-			const needle = query.trim().toLowerCase()
+			const searched = query.trim()
+			const needle = searched.toLowerCase()
+			// 只有当前查询词的内容结果才算数，避免上一词的命中残留。
+			const snippets = hits.query === searched ? hits.snippets : EMPTY_SNIPPETS
 			// 分组筛选只在「按分组」页生效；分组被删掉时自动失效，避免空列表锁死。
 			// 筛选项存在视图偏好里，所以切换会话后仍是同一组（全局设置）。
 			const activeFilter =
@@ -678,10 +725,12 @@ window.__ModuleLoader__.load({
 				if (activeFilter !== '' && view.assignments[row.id] !== activeFilter) return false
 				if (needle === '') return true
 				const title = row.title === '' ? t('untitled') : row.title
-				return (
+				const metaMatch =
 					title.toLowerCase().indexOf(needle) !== -1 ||
 					row.workspaceTitle.toLowerCase().indexOf(needle) !== -1
-				)
+				if (metaMatch) return true
+				// 标题/工作区没命中时，再看向消息内容命中的会话。
+				return Object.prototype.hasOwnProperty.call(snippets, row.id)
 			})
 
 			const groups = buildGroups(visible, workspaces, view, t)
@@ -923,6 +972,9 @@ window.__ModuleLoader__.load({
 				const current = typeof assigned === 'string' ? assigned : ''
 				// 按分组页里由分组标题说明归属，其他页才在行内显示可点击的分组名。
 				const tag = view.mode === 'custom' ? null : groupOf(row)
+				// 内容命中的片段：压成一行显示在标题下面。
+				const snippet =
+					typeof snippets[row.id] === 'string' ? snippets[row.id].replace(/\s+/g, ' ').trim() : ''
 				return h(
 					'div',
 					{ key: row.id, className: 'dsh-sh-row' },
@@ -939,7 +991,12 @@ window.__ModuleLoader__.load({
 							className:
 								'dsh-sh-dot' + (row.running ? ' is-running' : '') + (row.archived ? ' is-archived' : '')
 						}),
-						h('span', { className: 'dsh-sh-row-title' }, title),
+						h(
+							'span',
+							{ className: 'dsh-sh-row-col' },
+							h('span', { className: 'dsh-sh-row-title' }, title),
+							snippet !== '' ? h('span', { className: 'dsh-sh-row-snippet', title: snippet }, snippet) : null
+						),
 						row.pinned ? h('span', { className: 'dsh-sh-pin', title: t('pinned') }, h(PinGlyph)) : null,
 						h(
 							'span',
@@ -1213,7 +1270,7 @@ window.__ModuleLoader__.load({
 		 * ------------------------------------------------------------------ */
 
 		/** 需要的客户端服务。 */
-		const inject = ['slots', 'locale', 'uiWorkspace']
+		const inject = ['slots', 'locale', 'uiWorkspace', 'sessions']
 
 		/**
 		 * 注册「历史会话」页签。
@@ -1240,7 +1297,17 @@ window.__ModuleLoader__.load({
 						order: 40,
 						locale: NS,
 						label: () => t('view.label'),
-						inject: () => ({ openSession, translate: t })
+						inject: () => ({
+							openSession,
+							translate: t,
+							/**
+							 * 问 Host 的消息内容索引（搜索框不只搜标题）。
+							 * @param {string} queryText 查询词
+							 * @param {AbortSignal} signal 取消信号
+							 * @returns {Promise<object>} RemoteResult<{items, hasMore}>
+							 */
+							searchSessions: (queryText, signal) => ctx.sessions.search(queryText, signal)
+						})
 					},
 					HistoryView
 				)
