@@ -90,6 +90,30 @@ target = <克隆目录>\dsh-session-history-<version>.tgz
   ```
 - 彻底卸载：`plugin_manager → remove_bundle`，目标 `dsh-session-history`
 
+## 前置条件：内容搜索需要打开全文检索
+
+内容搜索（以及 dsh 侧栏自带的搜索）依赖 dsh 的会话全文检索服务。dsh 默认把它关着：
+
+```yaml
+- id: session-query-sqlite
+  config:
+    path: ':memory:'
+    openAt: never      # 全文检索 opt-in 关闭
+```
+
+这时搜索框只能匹配标题与工作区名，页面上会显示 **`内容搜索不可用（gateway/internal）`**（Host 侧真实原因是 `SESSION_QUERY_SEARCH_DISABLED`）。
+
+在任何更靠后的 patch 层覆盖这一行即可打开（bundle 层或 profile 的 `cordis.patch.yml` 都行），然后重启 dsh：
+
+```yaml
+- id: session-query-sqlite
+  config:
+    path: ':memory:'
+    openAt: first-search
+```
+
+`:memory:` 表示索引只在进程内、首次搜索时从历史日志重建；换成持久路径（如 `<DSH_HOME>/cache/session-search.db`）可避免每次启动重建。打开后状态行会先显示 `搜索内容中…`，再显示 `内容命中 N 条`。
+
 ## 目录结构
 
 ```
